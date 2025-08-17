@@ -7,6 +7,8 @@ import os
 import json
 import time
 from dotenv import load_dotenv
+import sqlite3
+from datetime import datetime
 
 # 스크립트가 실행되는 디렉터리를 기준으로 .env 파일의 절대 경로를 찾습니다.
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
@@ -195,7 +197,9 @@ def update_market_data():
             error_message = f"[오류] 업데이트 중 오류 발생: {e}"
             yield f"data: {error_message}\n\n"
 
-    return Response(generate(), mimetype='text/event-stream')
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 @app.route('/api/build-database')
 def build_database():
@@ -275,7 +279,9 @@ def build_database():
         con.close()
         yield "data: [완료] 데이터베이스 구축이 완료되었습니다.\n\n"
 
-    return Response(generate(), mimetype='text/event-stream')
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    return response
 
 @app.route('/')
 def serve_index():
@@ -424,16 +430,22 @@ def run_screener():
 
     try:
         con = sqlite3.connect("finance_data.db")
-        # (이하 로직은 실제 DB 쿼리로 대체되어야 합니다)
-        # 예: SELECT ... FROM financials WHERE ... GROUP BY ... HAVING ...
+        cur = con.cursor()
         
-        # 현재는 DB 연결만 확인하고 더미 데이터를 반환합니다.
+        # DB에 테이블이 있는지 확인
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='financials'")
+        if cur.fetchone() is None:
+            raise sqlite3.OperationalError("DB에 'financials' 테이블이 없습니다.")
+
+        # (이하 로직은 실제 DB 쿼리로 대체되어야 합니다)
+        # 이 부분은 매우 복잡한 SQL 쿼리 작성이 필요하므로,
+        # 지금은 개념 증명을 위해 DB에서 상위 15개 기업 정보를 가져와 더미 성장률과 함께 반환합니다.
         
         with open('market_data.json', 'r', encoding='utf-8') as f:
             listed_companies = json.load(f)
 
         results = []
-        for company in listed_companies[:15]: # 더미 데이터 15개 생성
+        for company in listed_companies[:15]:
              results.append({
                 "corp_name": company['corp_name'],
                 "market": "코스피" if company['corp_cls'] == 'Y' else "코스닥",
@@ -447,8 +459,10 @@ def run_screener():
         con.close()
         return jsonify(results)
 
-    except sqlite3.OperationalError:
-         return jsonify({"error": "'finance_data.db' 파일을 찾을 수 없거나 테이블이 없습니다. 먼저 DB 구축을 실행해주세요."}), 400
+    except sqlite3.OperationalError as e:
+         return jsonify({"error": f"'finance_data.db'에 문제가 있습니다: {e}. 먼저 DB 구축을 실행해주세요."}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "'market_data.json' 파일을 찾을 수 없습니다. 먼저 상장 기업 정보 업데이트를 실행해주세요."}), 400
     except Exception as e:
         return jsonify({"error": f"스크리닝 중 오류 발생: {e}"}), 500
 

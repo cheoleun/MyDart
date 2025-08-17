@@ -110,7 +110,10 @@
                     value="2022"
                     style="width: 80px; padding: 5px"
                 />
-                <button id="buildDbBtn">DB 구축 시작</button>
+                <button id="buildDbBtn">DB 구축/이어하기</button>
+                <button id="stopBuildDbBtn" style="display: none">
+                    DB 구축 중단
+                </button>
                 <span
                     id="dbBuildStatus"
                     style="margin-left: 15px; font-weight: bold"
@@ -269,36 +272,55 @@
                     };
                 });
 
-            document
-                .getElementById("buildDbBtn")
-                .addEventListener("click", () => {
-                    const statusSpan = document.getElementById("dbBuildStatus");
-                    const startYear =
-                        document.getElementById("dbBuildYear").value;
-                    const eventSource = new EventSource(
-                        `http://localhost:5003/api/build-database?start_year=${startYear}`
-                    );
+            let dbBuildEventSource = null;
+            const buildBtn = document.getElementById("buildDbBtn");
+            const stopBtn = document.getElementById("stopBuildDbBtn");
+            const statusSpan = document.getElementById("dbBuildStatus");
 
+            function resetDbButtons() {
+                buildBtn.disabled = false;
+                stopBtn.style.display = "none";
+            }
+
+            buildBtn.addEventListener("click", () => {
+                const startYear = document.getElementById("dbBuildYear").value;
+                dbBuildEventSource = new EventSource(
+                    `http://localhost:5003/api/build-database?start_year=${startYear}`
+                );
+
+                statusSpan.textContent =
+                    "DB 구축 시작... 서버에 연결 중입니다.";
+                buildBtn.disabled = true;
+                stopBtn.style.display = "inline-block";
+
+                dbBuildEventSource.onmessage = function (event) {
+                    statusSpan.textContent = event.data;
+                    if (
+                        event.data.startsWith("[완료]") ||
+                        event.data.startsWith("[오류]")
+                    ) {
+                        dbBuildEventSource.close();
+                        resetDbButtons();
+                    }
+                };
+
+                dbBuildEventSource.onerror = function (err) {
                     statusSpan.textContent =
-                        "DB 구축 시작... 서버에 연결 중입니다.";
+                        "오류: 서버와 연결이 끊어졌습니다.";
+                    console.error("EventSource failed:", err);
+                    dbBuildEventSource.close();
+                    resetDbButtons();
+                };
+            });
 
-                    eventSource.onmessage = function (event) {
-                        statusSpan.textContent = event.data;
-                        if (
-                            event.data.startsWith("[완료]") ||
-                            event.data.startsWith("[오류]")
-                        ) {
-                            eventSource.close();
-                        }
-                    };
-
-                    eventSource.onerror = function (err) {
-                        statusSpan.textContent =
-                            "오류: 서버와 연결이 끊어졌습니다.";
-                        console.error("EventSource failed:", err);
-                        eventSource.close();
-                    };
-                });
+            stopBtn.addEventListener("click", () => {
+                if (dbBuildEventSource) {
+                    dbBuildEventSource.close();
+                    statusSpan.textContent =
+                        "사용자에 의해 DB 구축이 중단되었습니다.";
+                    resetDbButtons();
+                }
+            });
 
             document
                 .getElementById("searchBtn")
