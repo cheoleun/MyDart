@@ -9,6 +9,7 @@ import time
 from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime
+import pandas as pd
 
 # 스크립트가 실행되는 디렉터리를 기준으로 .env 파일의 절대 경로를 찾습니다.
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
@@ -90,7 +91,7 @@ def fetch_financial_data(corp_code, year, reprt_code, fs_div):
             if item.get('fs_div') == fs_div:
                 account_nm = item.get('account_nm')
                 amount_str = item.get('thstrm_amount', '0').replace(',', '')
-                amount = int(amount_str) if amount_str else 0
+                amount = int(amount_str) if amount_str and amount_str != '-' else 0
                 
                 if account_nm in ['매출액', '영업수익']:
                     financial_info['revenue'] = amount
@@ -118,7 +119,7 @@ def fetch_total_shares(corp_code, year, reprt_code):
         for item in data.get('list', []):
             if 'istc_totqy' in item:
                 shares_str = item.get('istc_totqy', '0').replace(',', '')
-                return int(shares_str) if shares_str else 0
+                return int(shares_str) if shares_str and shares_str != '-' else 0
         
         return None # 'istc_totqy'를 가진 항목이 없는 경우
 
@@ -240,41 +241,73 @@ def build_database():
             return
             
         # 3. 재무 데이터 조회 및 DB 저장
-        total_companies = len(listed_companies)
+        companies_to_process = listed_companies[:100] # 테스트를 위해 100개 기업으로 제한
+        total_companies_to_process = len(companies_to_process)
         current_year = datetime.now().year
+        metrics = ['revenue', 'operating_profit', 'net_income']
         
-        for i, company in enumerate(listed_companies):
+        for i, company in enumerate(companies_to_process):
             corp_code = company['corp_code']
             corp_name = company['corp_name']
-            progress = (i + 1) / total_companies * 100
+            progress = (i + 1) / total_companies_to_process * 100
             
-            status_message = f"[{progress:.1f}%] ({i+1}/{total_companies}) {corp_name} 데이터 수집 중..."
+            status_message = f"[{progress:.1f}%] ({i+1}/{total_companies_to_process}) {corp_name} 데이터 수집 중..."
             yield f"data: {status_message}\n\n"
 
             for year in range(start_year, current_year + 1):
                 year_str = str(year)
-                # 각 분기별로 데이터가 DB에 있는지 확인하고, 없으면 API 호출하여 저장
-                for q_num in range(1, 5):
-                    q_key = f"Q{q_num}"
-                    
-                    cur.execute("SELECT COUNT(*) FROM financials WHERE corp_code = ? AND year = ? AND quarter = ?", (corp_code, year, q_num))
-                    exists = cur.fetchone()[0]
+                
+                # --- 연간 데이터가 모두 있는지 먼저 확인하여 건너뛰기 최적화 ---
+                cur.execute("SELECT COUNT(*) FROM financials WHERE corp_code = ? AND year = ?", (corp_code, year))
+                if cur.fetchone()[0] >= 4:
+                    continue
 
-                    if exists:
-                        continue # 이미 데이터가 있으면 건너뛰기
+                # --- API Calls for financial data (CFS first, then OFS) ---
+                fs_div = 'CFS'
+                q1_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Q1"], fs_div)
+                q2_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Half"], fs_div)
+                q3_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Q3"], fs_div)
+                annual_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Annual"], fs_div)
+                
+                if not any([q1_data, q2_data, q3_data, annual_data]):
+                    fs_div = 'OFS'
+                    q1_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Q1"], fs_div)
+                    q2_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Half"], fs_div)
+                    q3_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Q3"], fs_div)
+                    annual_data = fetch_financial_data(corp_code, year_str, REPORT_CODES["Annual"], fs_div)
 
-                    # 분기별 데이터 가져오기 (Q4는 연간 데이터 필요)
-                    # 이 로직은 실제 스크리너 구현 시 더 정교하게 만들어야 합니다.
-                    # 지금은 개념 증명을 위해 단순화된 API 호출을 사용합니다.
-                    time.sleep(0.1) # API Rate Limit
+                # --- API Calls for shares data ---
+                shares_data = {
+                    1: fetch_total_shares(corp_code, year_str, REPORT_CODES["Q1"]),
+                    2: fetch_total_shares(corp_code, year_str, REPORT_CODES["Half"]),
+                    3: fetch_total_shares(corp_code, year_str, REPORT_CODES["Q3"]),
+                    4: fetch_total_shares(corp_code, year_str, REPORT_CODES["Annual"])
+                }
+                
+                # --- Process and Insert Q1, Q2, Q3 ---
+                quarterly_data = {1: q1_data, 2: q2_data, 3: q3_data}
+                for q_num in range(1, 4):
+                    data = quarterly_data.get(q_num, {})
+                    if not data: continue
                     
-                    # (실제 데이터 저장 로직은 매우 복잡하므로 이 부분은 개념 증명으로 남겨둡니다)
-                    # 예: financial_data = fetch_financial_data(...)
-                    #     shares_data = fetch_total_shares(...)
-                    #     eps = ...
-                    #     cur.execute("INSERT INTO financials VALUES (?, ?, ?, ...)", (...))
+                    shares = shares_data.get(q_num)
+                    net_income = data.get('net_income')
+                    eps = int(net_income / shares) if net_income is not None and shares is not None and shares > 0 else None
+                    
+                    cur.execute("INSERT OR IGNORE INTO financials VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                (corp_code, year, q_num, data.get('revenue'), data.get('operating_profit'), net_income, shares, eps))
+
+                # --- Process and Insert Q4 ---
+                if annual_data:
+                    q4_metrics = {m: annual_data.get(m, 0) - sum(quarterly_data.get(q, {}).get(m, 0) for q in range(1, 4)) for m in metrics}
+                    q4_shares = shares_data.get(4)
+                    q4_net_income = q4_metrics.get('net_income')
+                    q4_eps = int(q4_net_income / q4_shares) if q4_net_income is not None and q4_shares is not None and q4_shares > 0 else None
+                    
+                    cur.execute("INSERT OR IGNORE INTO financials VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                (corp_code, year, 4, q4_metrics.get('revenue'), q4_metrics.get('operating_profit'), q4_net_income, q4_shares, q4_eps))
             
-            con.commit() # 한 기업의 모든 연도 처리가 끝나면 커밋
+            con.commit()
 
         con.close()
         yield "data: [완료] 데이터베이스 구축이 완료되었습니다.\n\n"
@@ -430,39 +463,49 @@ def run_screener():
 
     try:
         con = sqlite3.connect("finance_data.db")
+        # (실제 SQL 쿼리 로직 구현)
+        # 이 부분은 매우 복잡하며, 동적으로 SQL 쿼리를 생성해야 합니다.
+        # 지금은 개념 증명을 위해, 모든 기업의 최근 4분기 평균 매출 성장률을 계산하고
+        # 사용자가 입력한 조건을 만족하는 상위 20개 기업을 찾는 예시 쿼리를 작성합니다.
+        
+        # 실제 구현에서는 모든 조건을 동적으로 반영하는 복잡한 쿼리 빌더가 필요합니다.
+        
+        query = """
+            -- 이 쿼리는 개념 증명을 위한 예시이며, 모든 조건을 반영하지 않습니다.
+            -- 실제 구현을 위해서는 동적 쿼리 생성이 필요합니다.
+            SELECT 
+                m.corp_name, 
+                m.corp_cls,
+                AVG(f.revenue) as avg_revenue -- 예시로 평균 매출액만 계산
+            FROM financials f
+            JOIN market_data m ON f.corp_code = m.corp_code
+            WHERE f.year >= (SELECT MAX(year) FROM financials) - 1 -- 최근 2년치 데이터 대상
+            GROUP BY m.corp_name, m.corp_cls
+            HAVING COUNT(*) >= 4 -- 최소 4분기 데이터가 있는 기업만
+            ORDER BY avg_revenue DESC
+            LIMIT 20;
+        """
+        
         cur = con.cursor()
+        cur.execute(query)
+        rows = cur.fetchall()
         
-        # DB에 테이블이 있는지 확인
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='financials'")
-        if cur.fetchone() is None:
-            raise sqlite3.OperationalError("DB에 'financials' 테이블이 없습니다.")
-
-        # (이하 로직은 실제 DB 쿼리로 대체되어야 합니다)
-        # 이 부분은 매우 복잡한 SQL 쿼리 작성이 필요하므로,
-        # 지금은 개념 증명을 위해 DB에서 상위 15개 기업 정보를 가져와 더미 성장률과 함께 반환합니다.
-        
-        with open('market_data.json', 'r', encoding='utf-8') as f:
-            listed_companies = json.load(f)
-
         results = []
-        for company in listed_companies[:15]:
-             results.append({
-                "corp_name": company['corp_name'],
-                "market": "코스피" if company['corp_cls'] == 'Y' else "코스닥",
-                "avg_q_revenue_growth": 15.2,
-                "avg_q_op_profit_growth": 20.1,
-                "avg_q_net_income_growth": 25.5,
-                "avg_y_revenue_growth": 10.0,
-                "avg_y_op_profit_growth": 12.3,
-                "avg_y_net_income_growth": 14.8,
+        for row in rows:
+            results.append({
+                "corp_name": row[0],
+                "market": "코스피" if row[1] == 'Y' else "코스닥",
+                "avg_q_revenue_growth": 15.2, # Dummy
+                "avg_q_op_profit_growth": 20.1, # Dummy
+                "avg_q_net_income_growth": 25.5, # Dummy
+                "avg_y_revenue_growth": 10.0, # Dummy
+                "avg_y_op_profit_growth": 12.3, # Dummy
+                "avg_y_net_income_growth": 14.8, # Dummy
             })
+            
         con.close()
         return jsonify(results)
 
-    except sqlite3.OperationalError as e:
-         return jsonify({"error": f"'finance_data.db'에 문제가 있습니다: {e}. 먼저 DB 구축을 실행해주세요."}), 400
-    except FileNotFoundError:
-        return jsonify({"error": "'market_data.json' 파일을 찾을 수 없습니다. 먼저 상장 기업 정보 업데이트를 실행해주세요."}), 400
     except Exception as e:
         return jsonify({"error": f"스크리닝 중 오류 발생: {e}"}), 500
 
