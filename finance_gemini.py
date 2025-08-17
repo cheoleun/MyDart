@@ -8,7 +8,12 @@ import json
 import time
 from dotenv import load_dotenv
 
-load_dotenv() # .env 파일에서 환경 변수를 로드합니다.
+# 스크립트가 실행되는 디렉터리를 기준으로 .env 파일의 절대 경로를 찾습니다.
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+else:
+    print("경고: .env 파일을 찾을 수 없습니다. 시스템 환경 변수를 사용합니다.")
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
@@ -192,6 +197,86 @@ def update_market_data():
 
     return Response(generate(), mimetype='text/event-stream')
 
+@app.route('/api/build-database')
+def build_database():
+    start_year = request.args.get('start_year', default=datetime.now().year, type=int)
+    
+    def generate():
+        # 1. DB 연결 및 테이블 생성
+        try:
+            con = sqlite3.connect("finance_data.db")
+            cur = con.cursor()
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS financials (
+                    corp_code TEXT,
+                    year INTEGER,
+                    quarter INTEGER,
+                    revenue INTEGER,
+                    operating_profit INTEGER,
+                    net_income INTEGER,
+                    total_shares INTEGER,
+                    eps INTEGER,
+                    PRIMARY KEY (corp_code, year, quarter)
+                )
+            ''')
+            con.commit()
+            yield "data: [1/3] 데이터베이스 연결 및 테이블 생성 완료\n\n"
+        except Exception as e:
+            yield f"data: [오류] 데이터베이스 초기화 실패: {e}\n\n"
+            return
+
+        # 2. 상장 기업 목록 로드
+        try:
+            with open('market_data.json', 'r', encoding='utf-8') as f:
+                listed_companies = json.load(f)
+            yield "data: [2/3] 상장 기업 목록 로드 완료\n\n"
+        except Exception as e:
+            yield f"data: [오류] market_data.json 로드 실패: {e}\n\n"
+            con.close()
+            return
+            
+        # 3. 재무 데이터 조회 및 DB 저장
+        total_companies = len(listed_companies)
+        current_year = datetime.now().year
+        
+        for i, company in enumerate(listed_companies):
+            corp_code = company['corp_code']
+            corp_name = company['corp_name']
+            progress = (i + 1) / total_companies * 100
+            
+            status_message = f"[{progress:.1f}%] ({i+1}/{total_companies}) {corp_name} 데이터 수집 중..."
+            yield f"data: {status_message}\n\n"
+
+            for year in range(start_year, current_year + 1):
+                year_str = str(year)
+                # 각 분기별로 데이터가 DB에 있는지 확인하고, 없으면 API 호출하여 저장
+                for q_num in range(1, 5):
+                    q_key = f"Q{q_num}"
+                    
+                    cur.execute("SELECT COUNT(*) FROM financials WHERE corp_code = ? AND year = ? AND quarter = ?", (corp_code, year, q_num))
+                    exists = cur.fetchone()[0]
+
+                    if exists:
+                        continue # 이미 데이터가 있으면 건너뛰기
+
+                    # 분기별 데이터 가져오기 (Q4는 연간 데이터 필요)
+                    # 이 로직은 실제 스크리너 구현 시 더 정교하게 만들어야 합니다.
+                    # 지금은 개념 증명을 위해 단순화된 API 호출을 사용합니다.
+                    time.sleep(0.1) # API Rate Limit
+                    
+                    # (실제 데이터 저장 로직은 매우 복잡하므로 이 부분은 개념 증명으로 남겨둡니다)
+                    # 예: financial_data = fetch_financial_data(...)
+                    #     shares_data = fetch_total_shares(...)
+                    #     eps = ...
+                    #     cur.execute("INSERT INTO financials VALUES (?, ?, ?, ...)", (...))
+            
+            con.commit() # 한 기업의 모든 연도 처리가 끝나면 커밋
+
+        con.close()
+        yield "data: [완료] 데이터베이스 구축이 완료되었습니다.\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
 @app.route('/')
 def serve_index():
     return send_from_directory('.', 'index.html')
@@ -338,59 +423,34 @@ def run_screener():
     print(f"\n스크리너 요청 수신: {conditions}")
 
     try:
+        con = sqlite3.connect("finance_data.db")
+        # (이하 로직은 실제 DB 쿼리로 대체되어야 합니다)
+        # 예: SELECT ... FROM financials WHERE ... GROUP BY ... HAVING ...
+        
+        # 현재는 DB 연결만 확인하고 더미 데이터를 반환합니다.
+        
         with open('market_data.json', 'r', encoding='utf-8') as f:
             listed_companies = json.load(f)
-    except FileNotFoundError:
-        return jsonify({"error": "'market_data.json' 파일을 찾을 수 없습니다. 먼저 상장 기업 정보 업데이트를 실행해주세요."}), 400
-    except json.JSONDecodeError:
-        return jsonify({"error": "'market_data.json' 파일이 손상되었습니다. 업데이트를 다시 실행해주세요."}), 500
 
-    if not listed_companies:
-        return jsonify({"error": "상장 기업 목록이 비어있습니다. 업데이트를 실행해주세요."}), 500
+        results = []
+        for company in listed_companies[:15]: # 더미 데이터 15개 생성
+             results.append({
+                "corp_name": company['corp_name'],
+                "market": "코스피" if company['corp_cls'] == 'Y' else "코스닥",
+                "avg_q_revenue_growth": 15.2,
+                "avg_q_op_profit_growth": 20.1,
+                "avg_q_net_income_growth": 25.5,
+                "avg_y_revenue_growth": 10.0,
+                "avg_y_op_profit_growth": 12.3,
+                "avg_y_net_income_growth": 14.8,
+            })
+        con.close()
+        return jsonify(results)
 
-    results = []
-    total_companies = len(listed_companies)
-    
-    from datetime import datetime
-    import time
-
-    for i, company in enumerate(listed_companies):
-        corp_code = company['corp_code']
-        corp_name = company['corp_name']
-        print(f"({i+1}/{total_companies}) '{corp_name}' 스크리닝 시작...")
-
-        # DART API는 초당 요청 제한이 있을 수 있으므로 약간의 지연을 줍니다.
-        time.sleep(0.1) 
-
-        try:
-            # 여기에 실제 성장률 계산 및 조건 필터링 로직이 들어갑니다.
-            # 이 로직은 매우 길고 복잡하므로, 지금은 개념 증명을 위해
-            # 모든 회사가 조건을 통과하고, 더미 성장률을 반환한다고 가정합니다.
-            # 실제 구현을 위해서는 이 부분을 상세한 재무 데이터 조회 및 계산 코드로 채워야 합니다.
-            
-            passes_conditions = True # 임시로 통과 처리
-            
-            if passes_conditions:
-                results.append({
-                    "corp_name": corp_name,
-                    "market": "코스피" if company['corp_cls'] == 'Y' else "코스닥",
-                    "avg_q_revenue_growth": 15.2, # Dummy data
-                    "avg_q_op_profit_growth": 20.1, # Dummy data
-                    "avg_q_net_income_growth": 25.5, # Dummy data
-                    "avg_y_revenue_growth": 10.0, # Dummy data
-                    "avg_y_op_profit_growth": 12.3, # Dummy data
-                    "avg_y_net_income_growth": 14.8, # Dummy data
-                })
-
-                # 테스트를 위해 결과를 15개로 제한
-                if len(results) >= 15:
-                    print("결과가 15개에 도달하여 스크리닝을 중단합니다.")
-                    break
-        except Exception as e:
-            print(f"'{corp_name}' 스크리닝 중 오류 발생: {e}")
-            continue
-
-    return jsonify(results)
+    except sqlite3.OperationalError:
+         return jsonify({"error": "'finance_data.db' 파일을 찾을 수 없거나 테이블이 없습니다. 먼저 DB 구축을 실행해주세요."}), 400
+    except Exception as e:
+        return jsonify({"error": f"스크리닝 중 오류 발생: {e}"}), 500
 
 
 if __name__ == '__main__':

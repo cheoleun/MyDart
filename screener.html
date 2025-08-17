@@ -76,16 +76,43 @@
                     text-align: left;
                 "
             >
+                <p><strong>사전 준비 1: 상장 기업 목록 업데이트</strong></p>
                 <p>
-                    <strong>사전 준비:</strong> 스크리너를 실행하기 전에 최신
-                    상장 기업 정보를 가져와야 합니다. 이 작업은 시간이 매우 오래
-                    걸리지만, 한 번만 수행하면 됩니다.
+                    스크리너를 실행하기 전에 최신 상장 기업 목록을 가져옵니다.
+                    (최초 1회 필수)
                 </p>
                 <button id="updateMarketDataBtn">
-                    상장 기업 정보 업데이트
+                    상장 기업 목록 업데이트
                 </button>
                 <span
                     id="updateStatus"
+                    style="margin-left: 15px; font-weight: bold"
+                ></span>
+            </div>
+            <div
+                style="
+                    border: 1px solid #ccc;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                    text-align: left;
+                "
+            >
+                <p><strong>사전 준비 2: 재무 데이터베이스 구축</strong></p>
+                <p>
+                    이 작업은 시간이 매우 오래 걸리지만, 중단해도 이어서 할 수
+                    있습니다.
+                </p>
+                <label for="dbBuildYear">시작 연도:</label>
+                <input
+                    type="number"
+                    id="dbBuildYear"
+                    value="2022"
+                    style="width: 80px; padding: 5px"
+                />
+                <button id="buildDbBtn">DB 구축 시작</button>
+                <span
+                    id="dbBuildStatus"
                     style="margin-left: 15px; font-weight: bold"
                 ></span>
             </div>
@@ -223,6 +250,37 @@
 
                     statusSpan.textContent =
                         "업데이트 시작... 서버에 연결 중입니다.";
+
+                    eventSource.onmessage = function (event) {
+                        statusSpan.textContent = event.data;
+                        if (
+                            event.data.startsWith("[완료]") ||
+                            event.data.startsWith("[오류]")
+                        ) {
+                            eventSource.close();
+                        }
+                    };
+
+                    eventSource.onerror = function (err) {
+                        statusSpan.textContent =
+                            "오류: 서버와 연결이 끊어졌습니다.";
+                        console.error("EventSource failed:", err);
+                        eventSource.close();
+                    };
+                });
+
+            document
+                .getElementById("buildDbBtn")
+                .addEventListener("click", () => {
+                    const statusSpan = document.getElementById("dbBuildStatus");
+                    const startYear =
+                        document.getElementById("dbBuildYear").value;
+                    const eventSource = new EventSource(
+                        `http://localhost:5003/api/build-database?start_year=${startYear}`
+                    );
+
+                    statusSpan.textContent =
+                        "DB 구축 시작... 서버에 연결 중입니다.";
 
                     eventSource.onmessage = function (event) {
                         statusSpan.textContent = event.data;
