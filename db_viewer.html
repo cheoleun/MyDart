@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>DB 현황 조회</title>
+        <style>
+            body {
+                font-family: sans-serif;
+                margin: 0;
+                padding: 2rem;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                text-align: center;
+            }
+            nav {
+                margin-bottom: 2rem;
+            }
+            nav a {
+                margin: 0 15px;
+            }
+            #result-container {
+                margin-top: 20px;
+                text-align: left;
+                border: 1px solid #ccc;
+                padding: 20px;
+                border-radius: 8px;
+            }
+            #result-container h3 {
+                margin-top: 0;
+            }
+            #result-container ul {
+                list-style-type: none;
+                padding-left: 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <nav>
+                <a href="index.html">재무제표 조회</a> |
+                <a href="screener.html">기업 스크리너</a>
+            </nav>
+            <h1>데이터베이스 현황 조회</h1>
+            <div>
+                <input
+                    type="text"
+                    id="companyName"
+                    placeholder="회사 이름"
+                    style="padding: 8px; width: 300px"
+                />
+                <button id="searchBtn" style="padding: 8px 15px">조회</button>
+            </div>
+            <div id="result-container" style="display: none">
+                <h3 id="resultTitle"></h3>
+                <ul id="resultList"></ul>
+            </div>
+        </div>
+
+        <script>
+            document
+                .getElementById("searchBtn")
+                .addEventListener("click", async () => {
+                    const companyName =
+                        document.getElementById("companyName").value;
+                    const resultContainer =
+                        document.getElementById("result-container");
+                    const resultTitle = document.getElementById("resultTitle");
+                    const resultList = document.getElementById("resultList");
+
+                    if (!companyName) {
+                        alert("회사 이름을 입력해주세요.");
+                        return;
+                    }
+
+                    resultTitle.textContent = "조회 중...";
+                    resultList.innerHTML = "";
+                    resultContainer.style.display = "block";
+
+                    try {
+                        const response = await fetch(
+                            `http://localhost:5003/api/db-status?company_name=${encodeURIComponent(
+                                companyName
+                            )}`
+                        );
+                        const data = await response.json();
+
+                        if (!response.ok) {
+                            throw new Error(data.error || "서버 오류");
+                        }
+
+                        resultTitle.textContent = `'${companyName}' 데이터 현황`;
+                        if (Object.keys(data).length === 0) {
+                            resultList.innerHTML =
+                                "<li>저장된 데이터가 없습니다.</li>";
+                        } else {
+                            let html = "";
+                            for (const year in data) {
+                                html += `<li><strong>${year}년:</strong> ${data[
+                                    year
+                                ].join(", ")}분기</li>`;
+                            }
+                            resultList.innerHTML = html;
+                        }
+                    } catch (error) {
+                        resultTitle.textContent = `오류`;
+                        resultList.innerHTML = `<li>${error.message}</li>`;
+                    }
+                });
+        </script>
+    </body>
+</html>

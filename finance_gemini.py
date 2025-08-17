@@ -316,6 +316,48 @@ def build_database():
     response.headers['Access-Control-Allow-Origin'] = '*'
     return response
 
+@app.route('/api/db-status')
+def db_status():
+    company_name = request.args.get('company_name')
+    if not company_name:
+        return jsonify({"error": "회사 이름이 필요합니다."}), 400
+
+    corp_code = None
+    # corp_code를 찾기 위해 market_data.json을 사용 (더 효율적인 방법은 DB에 corp_name도 저장하는 것)
+    try:
+        with open('market_data.json', 'r', encoding='utf-8') as f:
+            market_data = json.load(f)
+            for company in market_data:
+                if company['corp_name'] == company_name:
+                    corp_code = company['corp_code']
+                    break
+    except FileNotFoundError:
+        return jsonify({"error": "'market_data.json' 파일이 없습니다. 먼저 상장 기업 정보 업데이트를 실행해주세요."}), 400
+    
+    if not corp_code:
+        return jsonify({"error": f"'{company_name}'을(를) 찾을 수 없습니다."}), 404
+
+    try:
+        con = sqlite3.connect("finance_data.db")
+        cur = con.cursor()
+        cur.execute("SELECT year, quarter FROM financials WHERE corp_code = ? ORDER BY year, quarter", (corp_code,))
+        rows = cur.fetchall()
+        con.close()
+
+        status = {}
+        for row in rows:
+            year, quarter = row
+            if year not in status:
+                status[year] = []
+            status[year].append(quarter)
+            
+        return jsonify(status)
+
+    except sqlite3.OperationalError:
+        return jsonify({"error": "'finance_data.db' 파일이 없거나 테이블이 없습니다. 먼저 DB 구축을 실행해주세요."}), 400
+    except Exception as e:
+        return jsonify({"error": f"DB 조회 중 오류 발생: {e}"}), 500
+
 @app.route('/')
 def serve_index():
     return send_from_directory('.', 'index.html')
