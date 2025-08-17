@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ko">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>기업 스크리너</title>
+        <style>
+            body {
+                font-family: sans-serif;
+                margin: 0;
+                padding: 2rem;
+            }
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                text-align: center;
+            }
+            nav {
+                margin-bottom: 2rem;
+            }
+            .screener-form {
+                border: 1px solid #ccc;
+                padding: 20px;
+                border-radius: 8px;
+                text-align: left;
+            }
+            .form-group {
+                margin-bottom: 15px;
+            }
+            .form-group label {
+                display: inline-block;
+                width: 300px;
+            }
+            .form-group input[type="number"] {
+                width: 80px;
+                padding: 5px;
+            }
+            #searchBtn {
+                padding: 10px 20px;
+                cursor: pointer;
+                display: block;
+                margin: 20px auto 0;
+            }
+            #status {
+                margin-top: 20px;
+                font-weight: bold;
+            }
+            #resultsTable {
+                margin-top: 20px;
+                width: 100%;
+                border-collapse: collapse;
+            }
+            #resultsTable th,
+            #resultsTable td {
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: center;
+            }
+            #resultsTable th {
+                background-color: #f2f2f2;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <nav>
+                <a href="index.html">재무제표 조회 페이지로 이동</a>
+            </nav>
+            <h1>기업 스크리너</h1>
+            <div
+                style="
+                    border: 1px solid #ccc;
+                    padding: 15px;
+                    border-radius: 8px;
+                    margin-bottom: 20px;
+                    text-align: left;
+                "
+            >
+                <p>
+                    <strong>사전 준비:</strong> 스크리너를 실행하기 전에 최신
+                    상장 기업 정보를 가져와야 합니다. 이 작업은 시간이 매우 오래
+                    걸리지만, 한 번만 수행하면 됩니다.
+                </p>
+                <button id="updateMarketDataBtn">
+                    상장 기업 정보 업데이트
+                </button>
+                <span
+                    id="updateStatus"
+                    style="margin-left: 15px; font-weight: bold"
+                ></span>
+            </div>
+            <div class="screener-form">
+                <fieldset>
+                    <legend>검색 조건</legend>
+                    <div class="form-group">
+                        <input type="checkbox" id="qRevenueCheck" />
+                        <label for="qRevenueCheck"
+                            >최근
+                            <input type="number" id="qMonths" value="4" /> 분기
+                            평균 매출액 증가율</label
+                        >
+                        >=
+                        <input type="number" id="qRevenueGrowth" value="30" /> %
+                    </div>
+                    <div class="form-group">
+                        <input type="checkbox" id="qOpProfitCheck" />
+                        <label for="qOpProfitCheck"
+                            >최근
+                            <input
+                                type="number"
+                                id="qMonths2"
+                                disabled
+                                value="4"
+                            />
+                            분기 평균 영업이익 증가율</label
+                        >
+                        >=
+                        <input type="number" id="qOpProfitGrowth" value="30" />
+                        %
+                    </div>
+                    <div class="form-group">
+                        <input type="checkbox" id="qNetIncomeCheck" />
+                        <label for="qNetIncomeCheck"
+                            >최근
+                            <input
+                                type="number"
+                                id="qMonths3"
+                                disabled
+                                value="4"
+                            />
+                            분기 평균 당기순이익 증가율</label
+                        >
+                        >=
+                        <input type="number" id="qNetIncomeGrowth" value="30" />
+                        %
+                    </div>
+                    <hr />
+                    <div class="form-group">
+                        <input type="checkbox" id="yRevenueCheck" />
+                        <label for="yRevenueCheck"
+                            >최근
+                            <input type="number" id="yYears" value="3" /> 년간
+                            평균 매출액 증가율</label
+                        >
+                        >=
+                        <input type="number" id="yRevenueGrowth" value="30" /> %
+                    </div>
+                    <div class="form-group">
+                        <input type="checkbox" id="yOpProfitCheck" />
+                        <label for="yOpProfitCheck"
+                            >최근
+                            <input
+                                type="number"
+                                id="yYears2"
+                                disabled
+                                value="3"
+                            />
+                            년간 평균 영업이익 증가율</label
+                        >
+                        >=
+                        <input type="number" id="yOpProfitGrowth" value="30" />
+                        %
+                    </div>
+                    <div class="form-group">
+                        <input type="checkbox" id="yNetIncomeCheck" />
+                        <label for="yNetIncomeCheck"
+                            >최근
+                            <input
+                                type="number"
+                                id="yYears3"
+                                disabled
+                                value="3"
+                            />
+                            년간 평균 당기순이익 증가율</label
+                        >
+                        >=
+                        <input type="number" id="yNetIncomeGrowth" value="30" />
+                        %
+                    </div>
+                </fieldset>
+                <button id="searchBtn">검색</button>
+            </div>
+            <div id="status"></div>
+            <table id="resultsTable">
+                <thead>
+                    <tr>
+                        <th>회사이름</th>
+                        <th>시장</th>
+                        <th>평균 분기 매출 성장률</th>
+                        <th>평균 분기 영업이익 성장률</th>
+                        <th>평균 분기 순이익 성장률</th>
+                        <th>평균 연간 매출 성장률</th>
+                        <th>평균 연간 영업이익 성장률</th>
+                        <th>평균 연간 순이익 성장률</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- 검색 결과가 여기에 동적으로 추가됩니다. -->
+                </tbody>
+            </table>
+        </div>
+
+        <script>
+            // 분기/연간 기간 입력 동기화
+            document
+                .getElementById("qMonths")
+                .addEventListener("input", (e) => {
+                    document.getElementById("qMonths2").value = e.target.value;
+                    document.getElementById("qMonths3").value = e.target.value;
+                });
+            document.getElementById("yYears").addEventListener("input", (e) => {
+                document.getElementById("yYears2").value = e.target.value;
+                document.getElementById("yYears3").value = e.target.value;
+            });
+
+            document
+                .getElementById("updateMarketDataBtn")
+                .addEventListener("click", () => {
+                    const statusSpan = document.getElementById("updateStatus");
+                    const eventSource = new EventSource(
+                        "http://localhost:5003/api/update-market-data"
+                    );
+
+                    statusSpan.textContent =
+                        "업데이트 시작... 서버에 연결 중입니다.";
+
+                    eventSource.onmessage = function (event) {
+                        statusSpan.textContent = event.data;
+                        if (
+                            event.data.startsWith("[완료]") ||
+                            event.data.startsWith("[오류]")
+                        ) {
+                            eventSource.close();
+                        }
+                    };
+
+                    eventSource.onerror = function (err) {
+                        statusSpan.textContent =
+                            "오류: 서버와 연결이 끊어졌습니다.";
+                        console.error("EventSource failed:", err);
+                        eventSource.close();
+                    };
+                });
+
+            document
+                .getElementById("searchBtn")
+                .addEventListener("click", async () => {
+                    const statusDiv = document.getElementById("status");
+                    const resultsBody = document.querySelector(
+                        "#resultsTable tbody"
+                    );
+                    statusDiv.textContent =
+                        "검색 중... (모든 상장사를 대상으로 하므로 시간이 매우 오래 걸릴 수 있습니다)";
+                    resultsBody.innerHTML = "";
+
+                    // 1. Get conditions from form
+                    const conditions = {};
+                    if (document.getElementById("qRevenueCheck").checked) {
+                        conditions.qRevenue = {
+                            quarters: document.getElementById("qMonths").value,
+                            growth: document.getElementById("qRevenueGrowth")
+                                .value,
+                        };
+                    }
+                    if (document.getElementById("qOpProfitCheck").checked) {
+                        conditions.qOpProfit = {
+                            quarters: document.getElementById("qMonths2").value,
+                            growth: document.getElementById("qOpProfitGrowth")
+                                .value,
+                        };
+                    }
+                    if (document.getElementById("qNetIncomeCheck").checked) {
+                        conditions.qNetIncome = {
+                            quarters: document.getElementById("qMonths3").value,
+                            growth: document.getElementById("qNetIncomeGrowth")
+                                .value,
+                        };
+                    }
+                    if (document.getElementById("yRevenueCheck").checked) {
+                        conditions.yRevenue = {
+                            years: document.getElementById("yYears").value,
+                            growth: document.getElementById("yRevenueGrowth")
+                                .value,
+                        };
+                    }
+                    if (document.getElementById("yOpProfitCheck").checked) {
+                        conditions.yOpProfit = {
+                            years: document.getElementById("yYears2").value,
+                            growth: document.getElementById("yOpProfitGrowth")
+                                .value,
+                        };
+                    }
+                    if (document.getElementById("yNetIncomeCheck").checked) {
+                        conditions.yNetIncome = {
+                            years: document.getElementById("yYears3").value,
+                            growth: document.getElementById("yNetIncomeGrowth")
+                                .value,
+                        };
+                    }
+
+                    try {
+                        // 2. Fetch data from backend
+                        const response = await fetch(
+                            "http://localhost:5003/api/screener",
+                            {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                },
+                                body: JSON.stringify(conditions),
+                            }
+                        );
+
+                        if (!response.ok) {
+                            const errData = await response.json();
+                            throw new Error(
+                                errData.error || "서버에서 오류가 발생했습니다."
+                            );
+                        }
+
+                        const results = await response.json();
+
+                        // 3. Display results
+                        statusDiv.textContent = `검색 완료: ${results.length}개 기업을 찾았습니다.`;
+                        if (results.length === 0) {
+                            resultsBody.innerHTML =
+                                '<tr><td colspan="8">조건에 맞는 기업이 없습니다.</td></tr>';
+                            return;
+                        }
+
+                        let rowsHtml = "";
+                        for (const company of results) {
+                            rowsHtml += `
+                                <tr>
+                                    <td>${company.corp_name}</td>
+                                    <td>${company.market}</td>
+                                    <td>${company.avg_q_revenue_growth.toFixed(
+                                        1
+                                    )}%</td>
+                                    <td>${company.avg_q_op_profit_growth.toFixed(
+                                        1
+                                    )}%</td>
+                                    <td>${company.avg_q_net_income_growth.toFixed(
+                                        1
+                                    )}%</td>
+                                    <td>${company.avg_y_revenue_growth.toFixed(
+                                        1
+                                    )}%</td>
+                                    <td>${company.avg_y_op_profit_growth.toFixed(
+                                        1
+                                    )}%</td>
+                                    <td>${company.avg_y_net_income_growth.toFixed(
+                                        1
+                                    )}%</td>
+                                </tr>
+                            `;
+                        }
+                        resultsBody.innerHTML = rowsHtml;
+                    } catch (error) {
+                        statusDiv.textContent = `오류 발생: ${error.message}`;
+                        console.error("Screener fetch error:", error);
+                    }
+                });
+        </script>
+    </body>
+</html>

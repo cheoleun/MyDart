@@ -1,0 +1,16 @@
+# DART and KRX data files
+CORPCODE.xml
+corp_code.zip
+market_data.json
+
+# Python virtual environment
+venv/
+__pycache__/
+*.pyc
+
+# IDE/Editor specific files
+.vscode/
+.idea/
+
+# Environment variables
+.env
