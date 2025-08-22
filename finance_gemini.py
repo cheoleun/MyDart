@@ -69,7 +69,7 @@ def get_corp_code_list():
 
 def fetch_financial_data(corp_code, year, reprt_code, fs_div):
     """특정 연도, 특정 보고서, 특정 재무제표 종류의 재무 데이터를 DART API를 통해 가져옵니다."""
-    url = f"{BASE_URL}/fnlttSinglAcnt.json"
+    url = f"{BASE_URL}/fnlttMultiAcnt.json"
     params = {
         'crtfc_key': API_KEY,
         'corp_code': corp_code,
@@ -187,11 +187,24 @@ def update_market_data():
                         'corp_cls': company_info['corp_cls']
                     })
 
-            # 5. 최종 결과를 JSON 파일로 저장
+            # 5. 최종 결과를 DB와 JSON 파일로 저장
+            con = sqlite3.connect("finance_data.db")
+            cur = con.cursor()
+            cur.execute('''
+                CREATE TABLE IF NOT EXISTS market_info (
+                    corp_code TEXT PRIMARY KEY,
+                    corp_name TEXT,
+                    corp_cls TEXT
+                )
+            ''')
+            cur.executemany("INSERT OR REPLACE INTO market_info VALUES (:corp_code, :corp_name, :corp_cls)", listed_companies)
+            con.commit()
+            con.close()
+
             with open('market_data.json', 'w', encoding='utf-8') as f:
                 json.dump(listed_companies, f, ensure_ascii=False, indent=4)
             
-            final_message = f"[완료] 업데이트 완료: 총 {len(listed_companies)}개의 기업 정보를 저장했습니다."
+            final_message = f"[완료] 업데이트 완료: 총 {len(listed_companies)}개의 기업 정보를 DB와 파일에 저장했습니다."
             yield f"data: {final_message}\n\n"
 
         except Exception as e:
@@ -241,7 +254,7 @@ def build_database():
             return
             
         # 3. 재무 데이터 조회 및 DB 저장
-        companies_to_process = listed_companies[:100] # 테스트를 위해 100개 기업으로 제한
+        companies_to_process = listed_companies
         total_companies_to_process = len(companies_to_process)
         current_year = datetime.now().year
         metrics = ['revenue', 'operating_profit', 'net_income']
@@ -380,9 +393,14 @@ def get_financials():
     except ValueError:
         return jsonify({"error": "연도는 숫자로 입력해주세요."}), 400
 
-    corp_list = get_corp_code_list()
+    try:
+        with open('market_data.json', 'r', encoding='utf-8') as f:
+            corp_list = json.load(f)
+    except FileNotFoundError:
+        return jsonify({"error": "'market_data.json' 파일을 찾을 수 없습니다. 먼저 상장 기업 정보 업데이트를 실행해주세요."}), 400
+    
     if not corp_list:
-        return jsonify({"error": "기업 목록을 불러올 수 없습니다."}), 500
+        return jsonify({"error": "상장 기업 목록이 비어있습니다."}), 500
 
     selected_corp = next((c for c in corp_list if c['corp_name'] == company_name), None)
     if not selected_corp:
@@ -505,47 +523,74 @@ def run_screener():
 
     try:
         con = sqlite3.connect("finance_data.db")
-        # (실제 SQL 쿼리 로직 구현)
-        # 이 부분은 매우 복잡하며, 동적으로 SQL 쿼리를 생성해야 합니다.
-        # 지금은 개념 증명을 위해, 모든 기업의 최근 4분기 평균 매출 성장률을 계산하고
-        # 사용자가 입력한 조건을 만족하는 상위 20개 기업을 찾는 예시 쿼리를 작성합니다.
+        # 모든 기업의 성장률을 계산하는 것은 매우 무거운 작업이므로,
+        # 이 예제에서는 최근 2년치 데이터가 있는 기업들을 대상으로 필터링합니다.
+        # 실제 서비스에서는 이 쿼리를 더 최적화해야 합니다.
         
-        # 실제 구현에서는 모든 조건을 동적으로 반영하는 복잡한 쿼리 빌더가 필요합니다.
-        
-        query = """
-            -- 이 쿼리는 개념 증명을 위한 예시이며, 모든 조건을 반영하지 않습니다.
-            -- 실제 구현을 위해서는 동적 쿼리 생성이 필요합니다.
-            SELECT 
-                m.corp_name, 
-                m.corp_cls,
-                AVG(f.revenue) as avg_revenue -- 예시로 평균 매출액만 계산
-            FROM financials f
-            JOIN market_data m ON f.corp_code = m.corp_code
-            WHERE f.year >= (SELECT MAX(year) FROM financials) - 1 -- 최근 2년치 데이터 대상
-            GROUP BY m.corp_name, m.corp_cls
-            HAVING COUNT(*) >= 4 -- 최소 4분기 데이터가 있는 기업만
-            ORDER BY avg_revenue DESC
-            LIMIT 20;
+        # 동적 쿼리 생성을 위한 준비
+        base_query = """
+            WITH GrowthData AS (
+                SELECT
+                    corp_code,
+                    year,
+                    quarter,
+                    revenue,
+                    operating_profit,
+                    net_income,
+                    LAG(revenue, 4) OVER (PARTITION BY corp_code ORDER BY year, quarter) as prev_y_revenue,
+                    LAG(operating_profit, 4) OVER (PARTITION BY corp_code ORDER BY year, quarter) as prev_y_op,
+                    LAG(net_income, 4) OVER (PARTITION BY corp_code ORDER BY year, quarter) as prev_y_ni
+                FROM financials
+            ),
+            AggregatedGrowth AS (
+                SELECT
+                    g.corp_code,
+                    m.corp_name,
+                    m.corp_cls,
+                    -- 분기 성장률 계산 (최근 N분기)
+                    AVG(CASE WHEN g.prev_y_revenue > 0 THEN (g.revenue - g.prev_y_revenue) * 100.0 / g.prev_y_revenue ELSE NULL END) as avg_q_revenue_growth,
+                    AVG(CASE WHEN g.prev_y_op <> 0 THEN (g.operating_profit - g.prev_y_op) * 100.0 / ABS(g.prev_y_op) ELSE NULL END) as avg_q_op_profit_growth,
+                    AVG(CASE WHEN g.prev_y_ni <> 0 THEN (g.net_income - g.prev_y_ni) * 100.0 / ABS(g.prev_y_ni) ELSE NULL END) as avg_q_net_income_growth
+                FROM GrowthData g
+                JOIN market_info m ON g.corp_code = m.corp_code
+                WHERE g.year >= (SELECT MAX(year) FROM financials) - 2 -- 최근 3년치 데이터로 계산
+                GROUP BY g.corp_code
+            )
+            SELECT * FROM AggregatedGrowth WHERE 1=1
         """
         
-        cur = con.cursor()
-        cur.execute(query)
-        rows = cur.fetchall()
+        params = []
+        # 사용자가 선택한 조건에 따라 WHERE 절 동적 추가 (HAVING 절 대신 WHERE 사용)
+        if conditions.get('qRevenueCheck'):
+            base_query += " AND avg_q_revenue_growth >= ?"
+            params.append(float(conditions['qRevenue']['growth']))
+        if conditions.get('qOpProfitCheck'):
+            base_query += " AND avg_q_op_profit_growth >= ?"
+            params.append(float(conditions['qOpProfit']['growth']))
+        if conditions.get('qNetIncomeCheck'):
+            base_query += " AND avg_q_net_income_growth >= ?"
+            params.append(float(conditions['qNetIncome']['growth']))
         
+        # (연간 성장률 조건은 쿼리가 더 복잡해지므로 이 예제에서는 생략)
+
+        base_query += " LIMIT 100" # 너무 많은 결과를 방지하기 위해 제한
+
+        df = pd.read_sql_query(base_query, con, params=params)
+        con.close()
+
         results = []
-        for row in rows:
+        for _, row in df.iterrows():
             results.append({
-                "corp_name": row[0],
-                "market": "코스피" if row[1] == 'Y' else "코스닥",
-                "avg_q_revenue_growth": 15.2, # Dummy
-                "avg_q_op_profit_growth": 20.1, # Dummy
-                "avg_q_net_income_growth": 25.5, # Dummy
-                "avg_y_revenue_growth": 10.0, # Dummy
-                "avg_y_op_profit_growth": 12.3, # Dummy
-                "avg_y_net_income_growth": 14.8, # Dummy
+                "corp_name": row['corp_name'],
+                "market": "코스피" if row['corp_cls'] == 'Y' else "코스닥",
+                "avg_q_revenue_growth": row['avg_q_revenue_growth'] or 0,
+                "avg_q_op_profit_growth": row['avg_q_op_profit_growth'] or 0,
+                "avg_q_net_income_growth": row['avg_q_net_income_growth'] or 0,
+                "avg_y_revenue_growth": 0, # Dummy
+                "avg_y_op_profit_growth": 0, # Dummy
+                "avg_y_net_income_growth": 0, # Dummy
             })
             
-        con.close()
         return jsonify(results)
 
     except Exception as e:
@@ -554,4 +599,4 @@ def run_screener():
 
 if __name__ == '__main__':
     get_corp_code_list() # 서버 시작 시 기업 코드 미리 로드
-    app.run(debug=True, port=5003)
+    app.run(host='0.0.0.0', port=5003, debug=True)

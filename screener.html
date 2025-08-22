@@ -249,7 +249,7 @@
                 .addEventListener("click", () => {
                     const statusSpan = document.getElementById("updateStatus");
                     const eventSource = new EventSource(
-                        "http://localhost:5003/api/update-market-data"
+                        "/api/update-market-data"
                     );
 
                     statusSpan.textContent =
@@ -286,7 +286,7 @@
             buildBtn.addEventListener("click", () => {
                 const startYear = document.getElementById("dbBuildYear").value;
                 dbBuildEventSource = new EventSource(
-                    `http://localhost:5003/api/build-database?start_year=${startYear}`
+                    `/api/build-database?start_year=${startYear}`
                 );
 
                 statusSpan.textContent =
@@ -381,16 +381,13 @@
 
                     try {
                         // 2. Fetch data from backend
-                        const response = await fetch(
-                            "http://localhost:5003/api/screener",
-                            {
-                                method: "POST",
-                                headers: {
-                                    "Content-Type": "application/json",
-                                },
-                                body: JSON.stringify(conditions),
-                            }
-                        );
+                        const response = await fetch("/api/screener", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify(conditions),
+                        });
 
                         if (!response.ok) {
                             const errData = await response.json();
